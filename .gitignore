@@ -1,0 +1,10 @@
+# Go compiled binaries
+chirpy
+
+# Common Go patterns
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
