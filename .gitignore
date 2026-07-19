@@ -8,6 +8,8 @@ chirpy
 *.so
 *.dylib
 bin/
+*.mod
 
 *.txt
 .env
+out
