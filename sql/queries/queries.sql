@@ -41,7 +41,7 @@ ORDER BY created_at ASC;
 SELECT hashed_password FROM users WHERE email = $1;
 
 -- name: GetUser :one
-SELECT id, created_at, updated_at, email FROM users WHERE email = $1;
+SELECT * FROM users WHERE email = $1;
 
 -- name: GetRefreshToken :one
 SELECT * FROM refresh_tokens WHERE user_id = $1;
@@ -75,3 +75,9 @@ DELETE FROM chirps WHERE id = $1;
 
 -- name: GetChirp :one
 SELECT * FROM chirps WHERE id = $1;
+
+-- name: UpgradeUserToRed :one
+UPDATE users SET is_chirpy_red = true WHERE id = $1 RETURNING *;
+
+-- name: GetChirpsFromUser :many
+SELECT * FROM chirps WHERE user_id = $1;

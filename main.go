@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -25,6 +26,7 @@ type User struct {
 	Email        string    `json:"email"`
 	Token        string    `json:"token"`
 	RefreshToken string    `json:"refresh_token"`
+	IsChirpyRed  bool      `json:"is_chirpy_red"`
 }
 
 type Chirp struct {
@@ -212,13 +214,33 @@ func (cfg *apiConfig) userAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (cfg *apiConfig) getAllChirps(w http.ResponseWriter, r *http.Request) {
+	var sorting string
 	ctx := r.Context()
-
-	chirps, err := cfg.dbQueries.GetAllChirps(ctx)
-
-	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "There was an issue getting all the chirps.")
+	s := r.URL.Query().Get("author_id")
+	s2 := r.URL.Query().Get("sort")
+	if s2 == "asc" {
+		sorting = "asc"
+	} else if s2 == "desc" {
+		sorting = "desc"
+	} else {
+		respondWithError(w, http.StatusBadRequest, "Unexpected sorting query.")
 		return
+	}
+	var chirps []database.Chirp
+	if s != "" {
+		uid, err := uuid.Parse(s)
+		if err != nil {
+			respondWithError(w, http.StatusBadRequest, "There was an issue parsing the user id ")
+			return
+		}
+		chirps, err = cfg.dbQueries.GetChirpsFromUser(ctx, uid)
+	} else {
+		var err error
+		chirps, err = cfg.dbQueries.GetAllChirps(ctx)
+		if err != nil {
+			respondWithError(w, http.StatusInternalServerError, "There was an issue getting all the chirps.")
+			return
+		}
 	}
 
 	lenChirps := len(chirps)
@@ -241,6 +263,15 @@ func (cfg *apiConfig) getAllChirps(w http.ResponseWriter, r *http.Request) {
 		structuredChirps = append(structuredChirps, structuredChirp)
 	}
 
+	if sorting == "asc" {
+		sort.Slice(structuredChirps, func(i, j int) bool {
+			return structuredChirps[i].CreatedAt.Before(structuredChirps[j].CreatedAt)
+		})
+	} else if sorting == "desc" {
+		sort.Slice(structuredChirps, func(i, j int) bool {
+			return structuredChirps[i].CreatedAt.After(structuredChirps[j].CreatedAt)
+		})
+	}
 	respondWithJSON(w, 200, structuredChirps)
 }
 
@@ -334,6 +365,7 @@ func (cfg *apiConfig) checkLogin(w http.ResponseWriter, r *http.Request) {
 		Email:        user.Email,
 		Token:        token,
 		RefreshToken: rf.Token,
+		IsChirpyRed:  user.IsChirpyRed.Bool,
 	}
 
 	respondWithJSON(w, http.StatusOK, userStructured)
@@ -470,6 +502,45 @@ func (cfg *apiConfig) deleteChirp(w http.ResponseWriter, r *http.Request) {
 
 }
 
+func (cfg *apiConfig) userUpgrade(w http.ResponseWriter, r *http.Request) {
+	type data struct {
+		UserId uuid.UUID `json:"user_id"`
+	}
+	type parameters struct {
+		Event string `json:"event"`
+		Data  data   `json:"data"`
+	}
+	param := parameters{}
+	decoder := json.NewDecoder(r.Body)
+	err := decoder.Decode(&param)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "There was an issue decoding the request.")
+		return
+	}
+
+	apiKey, err := auth.GetAPIKey(r.Header)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "There was an error getting the apikey")
+		return
+	}
+	envApiKey := os.Getenv("POLKA_KEY")
+	if envApiKey != apiKey {
+		respondWithError(w, http.StatusUnauthorized, "Api key is invalid")
+		return
+	}
+	if param.Event != "user.upgraded" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	ctx := r.Context()
+	_, err = cfg.dbQueries.UpgradeUserToRed(ctx, param.Data.UserId)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "There was an error ugprading the user: user not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // respondWithError creates a structured error response.
 //
 // It does not marshal the struct itself. It delegates that responsibility
@@ -589,6 +660,7 @@ func main() {
 	mux.HandleFunc("POST /api/revoke", apiCfg.revokeRefreshToken)
 	mux.HandleFunc("PUT /api/users", apiCfg.updateUser)
 	mux.HandleFunc("DELETE /api/chirps/{chirpID}", apiCfg.deleteChirp)
+	mux.HandleFunc("POST /api/polka/webhooks", apiCfg.userUpgrade)
 	// The health endpoint provides a simple response showing that
 	// the server is running.
 	mux.HandleFunc("GET /api/healthz", func(w http.ResponseWriter, r *http.Request) {

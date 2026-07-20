@@ -69,6 +69,19 @@ func GetBearerToken(header http.Header) (string, error) {
 	return TOKEN_STRING, nil
 }
 
+func GetAPIKey(header http.Header) (string, error) {
+	bearer := header.Get("Authorization")
+	if bearer == "" {
+		return "", fmt.Errorf("The authoraization header is empty.")
+	}
+	clean := strings.Split(bearer, " ")
+	if len(clean) < 2 {
+		return "", fmt.Errorf("Unexpected format of the bearer")
+	}
+	apiKey := clean[1]
+	return apiKey, nil
+}
+
 func MakeRefreshToken() string {
 	b := make([]byte, 256)
 	_, err := rand.Read(b)
